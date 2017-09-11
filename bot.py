@@ -9,6 +9,7 @@ import vk_api
 
 from queue import Queue
 from threading import Thread
+from functools import lru_cache
 from vk_api.longpoll import VkLongPoll, VkEventType
 
 
@@ -40,6 +41,36 @@ vk_bot.auth()
 vk_funcs = vk_bot.get_api()
 
 
+@lru_cache(maxsize=None)
+def get_sender_name(vk_funcs, user_id):
+    u"""
+    Возвращает имя (строку) пользователя контача по его id.
+    """
+    sender_info = vk_funcs.users.get(user_ids=str(user_id))[0]
+    return '{first_name} {last_name}'.format(**sender_info)
+
+
+def process_message_from_vk(tg_bot, vk_funcs, event):
+    u"""
+    Обрабатывает сообщение из ВК.
+    :param tg_bot: бот телеги
+    :param vk_funcs: api контача
+    :param event: объект Event с данными полученного сообщения
+    """
+    sender = get_sender_name(vk_funcs, event.user_id)
+
+    if getattr(event, 'text', None):
+        tg_bot.send_message(
+            tg_chat_id,
+            '{}:\n{}'.format(sender, event.text)
+        )
+    else:
+        tg_bot.send_message(
+            tg_chat_id,
+            '{} что-то написал, но пока это не поддерживается'.format(sender)
+        )
+
+
 def tg_to_vk_dispatcher():
     """
     "Слушает" телегу, отправляет сообщения в контач.
@@ -59,9 +90,8 @@ def tg_to_vk_dispatcher():
             tg_bot.send_message(tg_chat_id, 'OK')
         else:
             if vk_chat_id:
-                print('Send to VK: ', message.text)
                 vk_funcs.messages.send(
-                    user_id=vk_chat_id, message=message.text
+                    peer_id=vk_chat_id, message=message.text
                 )
 
     tg_bot.polling(none_stop=True)
@@ -79,12 +109,12 @@ def vk_to_tg_dispatcher():
             # запоминаем id пользователя, который регается.
             if event.text.startswith('/start'):
                 global vk_chat_id
-                vk_chat_id = event.user_id
-                vk_funcs.messages.send(user_id=vk_chat_id, message='OK')
+                vk_chat_id = event.peer_id
+                vk_funcs.messages.send(peer_id=vk_chat_id, message='OK')
 
             else:
                 if tg_chat_id:
-                    tg_bot.send_message(tg_chat_id, event.text)
+                    process_message_from_vk(tg_bot, vk_funcs, event)
 
 
 threads = (
