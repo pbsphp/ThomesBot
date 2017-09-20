@@ -1,13 +1,11 @@
 # coding: utf-8
 
-import re
 import os
 import configparser
 
 import telebot
 import vk_api
 
-from queue import Queue
 from threading import Thread
 from functools import lru_cache
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -50,6 +48,128 @@ def get_sender_name(vk_funcs, user_id):
     return '{first_name} {last_name}'.format(**sender_info)
 
 
+def process_attachment_from_vk(tg_bot, vk_bot, attachment):
+    u"""
+    Обрабатывает прикрепленные к сообщению данные, такие как
+    фото, аудио.
+    :param tg_bot: бот телеги
+    :param vk_bot: api контача
+    :param attachment: приложение.
+    """
+
+    # TODO: Позже отрефакторить всю эту портянку.
+
+    if attachment['type'] == 'photo':
+        size_keys = (
+            'photo_2560', 'photo_1280', 'photo_807', 'photo_604', 'photo_130',
+            'photo_75')
+        link = None
+        for size_key in size_keys:
+            if attachment['photo'].get(size_key):
+                link = attachment['photo'][size_key]
+                break
+        if link is not None:
+            tg_bot.send_message(
+                tg_chat_id,
+                'Attachment/photo:\n{}\n{}'.format(
+                    attachment['photo']['text'],
+                    link
+                )
+            )
+    elif attachment['type'] == 'video':
+        size_keys = (
+            'photo_800', 'photo_640', 'photo_320', 'photo_130')
+        preview_link = None
+        for size_key in size_keys:
+            if attachment['video'].get(size_key):
+                preview_link = attachment['video'][size_key]
+                break
+        if preview_link is not None:
+            tg_bot.send_message(
+                tg_chat_id,
+                'Attachment/video:\n{}\n{}\n{}\n{}\n'.format(
+                    attachment['video']['title'],
+                    attachment['video']['description'],
+                    preview_link,
+                    attachment['video'].get('player', '<no link>'),
+                )
+            )
+    elif attachment['type'] == 'audio':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/audio:\n{}\n{}\n{}\n'.format(
+                attachment['audio']['artist'],
+                attachment['audio']['title'],
+                attachment['audio']['url'],
+            )
+        )
+    elif attachment['type'] == 'doc':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/doc:\n{}(ext is {})\n{}\n'.format(
+                attachment['doc']['title'],
+                attachment['doc']['ext'],
+                attachment['doc']['url'],
+            )
+        )
+    elif attachment['type'] == 'link':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/link:\n{}(ext is {})\n{}\n'.format(
+                attachment['link']['title'],
+                attachment['link']['description'],
+                attachment['link']['url'],
+            )
+        )
+    elif attachment['type'] == 'market':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/market: <not implemented>\n{}\n'.format(
+                repr(attachment['market'])
+            )
+        )
+    elif attachment['type'] == 'market_album':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/market_album: <not implemented>\n{}\n'.format(
+                repr(attachment['market_album'])
+            )
+        )
+    elif attachment['type'] == 'wall':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/wall: <not implemented>\n{}\n'.format(
+                repr(attachment['wall'])
+            )
+        )
+    elif attachment['type'] == 'wall_reply':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/wall_reply: <not implemented>\n{}\n'.format(
+                repr(attachment['wall_reply'])
+            )
+        )
+    elif attachment['type'] == 'sticker':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/sticker: <not implemented>\n{}\n'.format(
+                repr(attachment['sticker'])
+            )
+        )
+    elif attachment['type'] == 'gift':
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/gift: <not implemented>\n{}\n'.format(
+                repr(attachment['gift'])
+            )
+        )
+    else:
+        tg_bot.send_message(
+            tg_chat_id,
+            'Attachment/unknown:\n{}\n'.format(repr(attachment))
+        )
+
+
 def process_message_from_vk(tg_bot, vk_funcs, event):
     u"""
     Обрабатывает сообщение из ВК.
@@ -64,7 +184,14 @@ def process_message_from_vk(tg_bot, vk_funcs, event):
             tg_chat_id,
             '{}:\n{}'.format(sender, event.text)
         )
-    else:
+    if getattr(event, 'attachments', {}):
+        message_obj = vk_funcs.messages.getById(
+            message_ids=str(event.message_id))['items'][0]
+        for attachment in message_obj['attachments']:
+            process_attachment_from_vk(tg_bot, vk_funcs, attachment)
+
+    if (not getattr(event, 'text', None) and
+            not getattr(event, 'attachments', {})):
         tg_bot.send_message(
             tg_chat_id,
             '{} что-то написал, но пока это не поддерживается'.format(sender)
