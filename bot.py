@@ -8,6 +8,7 @@ import vk_api
 
 from threading import Thread
 from functools import lru_cache
+from io import BytesIO
 from vk_api.longpoll import VkLongPoll, VkEventType
 
 
@@ -41,7 +42,7 @@ vk_funcs = vk_bot.get_api()
 
 @lru_cache(maxsize=None)
 def get_sender_name(vk_funcs, user_id):
-    u"""
+    """
     Возвращает имя (строку) пользователя контача по его id.
     """
     sender_info = vk_funcs.users.get(user_ids=str(user_id))[0]
@@ -49,7 +50,7 @@ def get_sender_name(vk_funcs, user_id):
 
 
 def process_attachment_from_vk(tg_bot, vk_bot, attachment):
-    u"""
+    """
     Обрабатывает прикрепленные к сообщению данные, такие как
     фото, аудио.
     :param tg_bot: бот телеги
@@ -171,7 +172,7 @@ def process_attachment_from_vk(tg_bot, vk_bot, attachment):
 
 
 def process_message_from_vk(tg_bot, vk_funcs, event):
-    u"""
+    """
     Обрабатывает сообщение из ВК.
     :param tg_bot: бот телеги
     :param vk_funcs: api контача
@@ -198,17 +199,112 @@ def process_message_from_vk(tg_bot, vk_funcs, event):
         )
 
 
+def process_attachment_from_tg(vk_bot, vk_funcs, tg_bot, message):
+    """
+    Обрабатывает прикрепленные к сообщению данные, такие как
+    фото, аудио.
+    :param vk_bot: api контача
+    :param vk_func: функции api контача
+    :param tg_bot: бот телеги
+    :param message: объект Message.
+    """
+    vk_upload = vk_api.VkUpload(vk_bot)
+
+    def get_file_buffer_by_file_id(telegram_file_id):
+        file_obj = tg_bot.get_file(telegram_file_id)
+        buffer = BytesIO(
+            tg_bot.download_file(file_obj.file_path)
+        )
+        buffer.name = os.path.basename(file_obj.file_path)
+        return buffer
+
+    # TODO: Позже отрефакторить всю эту портянку
+
+    if message.photo:
+        file_size_obj = message.photo[-1]
+        vk_uploaded_msg = vk_upload.photo_messages(
+            get_file_buffer_by_file_id(file_size_obj.file_id)
+        )[0]
+        vk_funcs.messages.send(
+            peer_id=vk_chat_id,
+            attachment='photo{}_{}'.format(
+                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
+            message=message.caption
+        )
+
+    if message.sticker:
+        if message.sticker.thumb:
+            vk_uploaded_msg = vk_upload.document_wall(
+                get_file_buffer_by_file_id(message.sticker.file_id)
+            )[0]
+            vk_funcs.messages.send(
+                peer_id=vk_chat_id,
+                attachment='doc{}_{}'.format(
+                    vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
+                message='<document/sticker>'
+            )
+
+    if message.document:
+        vk_uploaded_msg = vk_upload.document(
+            get_file_buffer_by_file_id(message.document.file_id)
+        )[0]
+        vk_funcs.messages.send(
+            peer_id=vk_chat_id,
+            attachment='doc{}_{}'.format(
+                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
+            message='<document/file>'
+        )
+
+    if message.voice:
+        vk_uploaded_msg = vk_upload.audio_message(
+            get_file_buffer_by_file_id(message.voice.file_id)
+        )[0]
+        vk_funcs.messages.send(
+            peer_id=vk_chat_id,
+            attachment='audio{}_{}'.format(
+                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
+            message='<document/audio>'
+        )
+
+
+def process_message_from_tg(tg_bot, vk_bot, vk_funcs, message):
+    """
+    Обрабатывает сообщение из телеги.
+    :param tg_bot: бот телеги
+    :param vk_bot: api контача
+    :param vk_funcs: функции api контача
+    :param message: объект Message с данными полученного сообщения
+    """
+    if getattr(message, 'text', None):
+        vk_funcs.messages.send(
+            peer_id=vk_chat_id, message=message.text
+        )
+
+    process_attachment_from_tg(vk_bot, vk_funcs, tg_bot, message)
+
+
 def tg_to_vk_dispatcher():
     """
     "Слушает" телегу, отправляет сообщения в контач.
     Также выполняет регу диалогов (см. /start).
     """
-    @tg_bot.message_handler(func=lambda m: True)
+    # Подписываемся на все возможные типы данных, чтобы в случае чего дать
+    # пользователю понять, что такой тип сообщения не принимается.
+    content_types = [
+        'text', 'audio', 'document', 'photo', 'sticker', 'video', 'video_note',
+        'voice', 'location', 'contact', 'new_chat_members', 'left_chat_member',
+        'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
+        'group_chat_created', 'supergroup_chat_created',
+        'channel_chat_created', 'migrate_to_chat_id', 'migrate_from_chat_id',
+        'pinned_message',
+    ]
+
+    @tg_bot.message_handler(func=lambda m: True, content_types=content_types)
     def callback(message):
         """
         В телегу пришло сообщение. Добавляем в очередь отправки.
         """
-        if message.text.startswith('/start'):
+        if message.text and message.text.startswith('/start'):
             # Регистрация в телеге происходит следующим способом:
             # Пользователь вводит /start, запоминается id чатика в
             # телеге. Далее сообщения будут отправляться в этот чат.
@@ -217,9 +313,7 @@ def tg_to_vk_dispatcher():
             tg_bot.send_message(tg_chat_id, 'OK')
         else:
             if vk_chat_id:
-                vk_funcs.messages.send(
-                    peer_id=vk_chat_id, message=message.text
-                )
+                process_message_from_tg(tg_bot, vk_bot, vk_funcs, message)
 
     tg_bot.polling(none_stop=True)
 
