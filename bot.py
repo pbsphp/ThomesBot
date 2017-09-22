@@ -261,7 +261,7 @@ def process_attachment_from_tg(vk_bot, vk_funcs, tg_bot, message):
         )[0]
         vk_funcs.messages.send(
             peer_id=vk_chat_id,
-            attachment='audio{}_{}'.format(
+            attachment='doc{}_{}'.format(
                 vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
             message='<document/audio>'
         )
