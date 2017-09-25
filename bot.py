@@ -8,8 +8,9 @@ import vk_api
 
 from threading import Thread
 from functools import lru_cache
-from io import BytesIO
 from vk_api.longpoll import VkLongPoll, VkEventType
+
+import handlers
 
 
 # Настройки
@@ -27,7 +28,10 @@ except KeyError:
     raise RuntimeError('Invalid config. Check config.ini file!')
 
 
-# Id чатов в телеге и контаче. Заполняются при регистрации через /start.
+# Id чатов в телеге и контаче. Заполняются при регистрации через
+# /start. К одному боту может быть привязан один собеседник (чат)
+# в контаче, т. к. в противном случае неясно, кому доставлять
+# сообщения из телеги.
 tg_chat_id = None
 vk_chat_id = None
 
@@ -38,6 +42,7 @@ tg_bot = telebot.TeleBot(telegram_token)
 vk_bot = vk_api.VkApi(vk_login, vk_password)
 vk_bot.auth()
 vk_funcs = vk_bot.get_api()
+vk_upload = vk_api.VkUpload(vk_bot)
 
 
 @lru_cache(maxsize=None)
@@ -49,238 +54,107 @@ def get_sender_name(vk_funcs, user_id):
     return '{first_name} {last_name}'.format(**sender_info)
 
 
-def process_attachment_from_vk(tg_bot, vk_bot, attachment):
+def process_attachments_from_vk(event, message):
     """
     Обрабатывает прикрепленные к сообщению данные, такие как
     фото, аудио.
-    :param tg_bot: бот телеги
-    :param vk_bot: api контача
-    :param attachment: приложение.
+    :param event: уведомление боту о сообщении.
+    :param message: объект с сообщением из ВК.
     """
+    vk_attachment_handlers_map = {
+        'photo': handlers.vk_photo,
+        'video': handlers.vk_video,
+        'audio': handlers.vk_audio,
+        'doc': handlers.vk_doc,
+        'link': handlers.vk_link,
+        'sticker': handlers.vk_sticker,
+    }
 
-    # TODO: Позже отрефакторить всю эту портянку.
+    handlers_found = False
+    for attachment in message.attachments:
+        try:
+            handler = vk_attachment_handlers_map[attachment['type']]
+        except KeyError:
+            pass
+        else:
+            handlers_found = True
+            handler(
+                tg_bot, vk_bot, vk_funcs, vk_upload,
+                tg_chat_id, vk_chat_id,
+                message, attachment
+            )
 
-    if attachment['type'] == 'photo':
-        size_keys = (
-            'photo_2560', 'photo_1280', 'photo_807', 'photo_604', 'photo_130',
-            'photo_75')
-        link = None
-        for size_key in size_keys:
-            if attachment['photo'].get(size_key):
-                link = attachment['photo'][size_key]
-                break
-        if link is not None:
-            tg_bot.send_message(
-                tg_chat_id,
-                'Attachment/photo:\n{}\n{}'.format(
-                    attachment['photo']['text'],
-                    link
-                )
-            )
-    elif attachment['type'] == 'video':
-        size_keys = (
-            'photo_800', 'photo_640', 'photo_320', 'photo_130')
-        preview_link = None
-        for size_key in size_keys:
-            if attachment['video'].get(size_key):
-                preview_link = attachment['video'][size_key]
-                break
-        if preview_link is not None:
-            tg_bot.send_message(
-                tg_chat_id,
-                'Attachment/video:\n{}\n{}\n{}\n{}\n'.format(
-                    attachment['video']['title'],
-                    attachment['video']['description'],
-                    preview_link,
-                    attachment['video'].get('player', '<no link>'),
-                )
-            )
-    elif attachment['type'] == 'audio':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/audio:\n{}\n{}\n{}\n'.format(
-                attachment['audio']['artist'],
-                attachment['audio']['title'],
-                attachment['audio']['url'],
-            )
-        )
-    elif attachment['type'] == 'doc':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/doc:\n{}(ext is {})\n{}\n'.format(
-                attachment['doc']['title'],
-                attachment['doc']['ext'],
-                attachment['doc']['url'],
-            )
-        )
-    elif attachment['type'] == 'link':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/link:\n{}(ext is {})\n{}\n'.format(
-                attachment['link']['title'],
-                attachment['link']['description'],
-                attachment['link']['url'],
-            )
-        )
-    elif attachment['type'] == 'market':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/market: <not implemented>\n{}\n'.format(
-                repr(attachment['market'])
-            )
-        )
-    elif attachment['type'] == 'market_album':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/market_album: <not implemented>\n{}\n'.format(
-                repr(attachment['market_album'])
-            )
-        )
-    elif attachment['type'] == 'wall':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/wall: <not implemented>\n{}\n'.format(
-                repr(attachment['wall'])
-            )
-        )
-    elif attachment['type'] == 'wall_reply':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/wall_reply: <not implemented>\n{}\n'.format(
-                repr(attachment['wall_reply'])
-            )
-        )
-    elif attachment['type'] == 'sticker':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/sticker: <not implemented>\n{}\n'.format(
-                repr(attachment['sticker'])
-            )
-        )
-    elif attachment['type'] == 'gift':
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/gift: <not implemented>\n{}\n'.format(
-                repr(attachment['gift'])
-            )
-        )
-    else:
-        tg_bot.send_message(
-            tg_chat_id,
-            'Attachment/unknown:\n{}\n'.format(repr(attachment))
+    if not handlers_found and not getattr(event, 'text', None):
+        vk_funcs.messages.send(
+            peer_id=vk_chat_id,
+            message='**[sys]** Message is empty or attachment type is not supported.',
         )
 
 
-def process_message_from_vk(tg_bot, vk_funcs, event):
+def process_message_from_vk(event):
     """
     Обрабатывает сообщение из ВК.
-    :param tg_bot: бот телеги
-    :param vk_funcs: api контача
     :param event: объект Event с данными полученного сообщения
     """
     sender = get_sender_name(vk_funcs, event.user_id)
 
-    if getattr(event, 'text', None):
+    if event_text:
         tg_bot.send_message(
             tg_chat_id,
-            '{}:\n{}'.format(sender, event.text)
+            '{}:\n{}'.format(sender, event_text)
         )
+
     if getattr(event, 'attachments', {}):
         message_obj = vk_funcs.messages.getById(
             message_ids=str(event.message_id))['items'][0]
-        for attachment in message_obj['attachments']:
-            process_attachment_from_vk(tg_bot, vk_funcs, attachment)
 
-    if (not getattr(event, 'text', None) and
-            not getattr(event, 'attachments', {})):
-        tg_bot.send_message(
-            tg_chat_id,
-            '{} что-то написал, но пока это не поддерживается'.format(sender)
-        )
+        process_attachments_from_vk(event, message_obj)
 
 
-def process_attachment_from_tg(vk_bot, vk_funcs, tg_bot, message):
+def process_attachment_from_tg(message):
     """
     Обрабатывает прикрепленные к сообщению данные, такие как
     фото, аудио.
-    :param vk_bot: api контача
-    :param vk_func: функции api контача
-    :param tg_bot: бот телеги
     :param message: объект Message.
     """
-    vk_upload = vk_api.VkUpload(vk_bot)
+    tg_attachment_handlers_map = {
+        'photo': handlers.tg_photo,
+        'sticker': handlers.tg_sticker,
+        'document': handlers.tg_document,
+        'voice': handlers.tg_voice,
+    }
 
-    def get_file_buffer_by_file_id(telegram_file_id):
-        file_obj = tg_bot.get_file(telegram_file_id)
-        buffer = BytesIO(
-            tg_bot.download_file(file_obj.file_path)
-        )
-        buffer.name = os.path.basename(file_obj.file_path)
-        return buffer
+    handlers_to_execute = []
+    for attr, handler in tg_attachment_handlers_map.items():
+        if getattr(message, attr, None):
+            handlers_to_execute.append(handler)
 
-    # TODO: Позже отрефакторить всю эту портянку
-
-    if message.photo:
-        file_size_obj = message.photo[-1]
-        vk_uploaded_msg = vk_upload.photo_messages(
-            get_file_buffer_by_file_id(file_size_obj.file_id)
-        )[0]
-        vk_funcs.messages.send(
-            peer_id=vk_chat_id,
-            attachment='photo{}_{}'.format(
-                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
-            message=message.caption
-        )
-
-    if message.sticker:
-        if message.sticker.thumb:
-            vk_uploaded_msg = vk_upload.document_wall(
-                get_file_buffer_by_file_id(message.sticker.file_id)
-            )[0]
-            vk_funcs.messages.send(
-                peer_id=vk_chat_id,
-                attachment='doc{}_{}'.format(
-                    vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
-                message='<document/sticker>'
+    if handlers_to_execute:
+        for handler in handlers_to_execute:
+            handler(
+                tg_bot, vk_bot, vk_funcs, vk_upload,
+                tg_chat_id, vk_chat_id,
+                message
             )
-
-    if message.document:
-        vk_uploaded_msg = vk_upload.document(
-            get_file_buffer_by_file_id(message.document.file_id)
-        )[0]
-        vk_funcs.messages.send(
-            peer_id=vk_chat_id,
-            attachment='doc{}_{}'.format(
-                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
-            message='<document/file>'
-        )
-
-    if message.voice:
-        vk_uploaded_msg = vk_upload.audio_message(
-            get_file_buffer_by_file_id(message.voice.file_id)
-        )[0]
-        vk_funcs.messages.send(
-            peer_id=vk_chat_id,
-            attachment='doc{}_{}'.format(
-                vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
-            message='<document/audio>'
+    elif not message.text:
+        tg_bot.send_message(
+            tg_chat_id,
+            '**[sys]** Message is empty or attachment type is not supported.',
+            parse_mode='Markup'
         )
 
 
-def process_message_from_tg(tg_bot, vk_bot, vk_funcs, message):
+def process_message_from_tg(message):
     """
     Обрабатывает сообщение из телеги.
-    :param tg_bot: бот телеги
-    :param vk_bot: api контача
-    :param vk_funcs: функции api контача
     :param message: объект Message с данными полученного сообщения
     """
-    if getattr(message, 'text', None):
+    if message.text:
         vk_funcs.messages.send(
             peer_id=vk_chat_id, message=message.text
         )
 
-    process_attachment_from_tg(vk_bot, vk_funcs, tg_bot, message)
+    process_attachment_from_tg(message)
 
 
 def tg_to_vk_dispatcher():
@@ -291,10 +165,10 @@ def tg_to_vk_dispatcher():
     # Подписываемся на все возможные типы данных, чтобы в случае чего дать
     # пользователю понять, что такой тип сообщения не принимается.
     content_types = [
-        'text', 'audio', 'document', 'photo', 'sticker', 'video', 'video_note',
-        'voice', 'location', 'contact', 'new_chat_members', 'left_chat_member',
-        'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
-        'group_chat_created', 'supergroup_chat_created',
+        'audio', 'photo', 'sticker', 'video', 'video_note', 'new_chat_photo',
+        'location', 'contact', 'new_chat_members', 'left_chat_member', 'text',
+        'new_chat_title', 'new_chat_photo', 'delete_chat_photo', 'text',
+        'group_chat_created', 'supergroup_chat_created', 'voice', 'document',
         'channel_chat_created', 'migrate_to_chat_id', 'migrate_from_chat_id',
         'pinned_message',
     ]
@@ -313,7 +187,7 @@ def tg_to_vk_dispatcher():
             tg_bot.send_message(tg_chat_id, 'OK')
         else:
             if vk_chat_id:
-                process_message_from_tg(tg_bot, vk_bot, vk_funcs, message)
+                process_message_from_tg(message)
 
     tg_bot.polling(none_stop=True)
 
@@ -335,7 +209,7 @@ def vk_to_tg_dispatcher():
 
             else:
                 if tg_chat_id:
-                    process_message_from_vk(tg_bot, vk_funcs, event)
+                    process_message_from_vk(event)
 
 
 threads = (
