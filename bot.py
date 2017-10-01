@@ -168,6 +168,16 @@ def process_message_from_tg(message):
     process_attachment_from_tg(message)
 
 
+def notify_register_complete():
+    """Уведомляет обе стороны об успешной регистрации.
+    """
+    message = 'VK peer id is {}, telegram peer id is {}. Ebites now.'.format(
+        vk_chat_id, tg_chat_id
+    )
+    tg_bot.send_message(tg_chat_id, message)
+    vk_funcs.messages.send(peer_id=vk_chat_id, message=message)
+
+
 def tg_to_vk_dispatcher():
     """
     "Слушает" телегу, отправляет сообщения в контач.
@@ -189,13 +199,17 @@ def tg_to_vk_dispatcher():
         """
         В телегу пришло сообщение. Добавляем в очередь отправки.
         """
-        if message.text and message.text.startswith('/start'):
+        if (tg_chat_id is None and message.text and
+                message.text.startswith('/start')):
             # Регистрация в телеге происходит следующим способом:
             # Пользователь вводит /start, запоминается id чатика в
             # телеге. Далее сообщения будут отправляться в этот чат.
             global tg_chat_id
             tg_chat_id = message.chat.id
-            tg_bot.send_message(tg_chat_id, 'OK')
+            if vk_chat_id is not None:
+                notify_register_complete()
+            else:
+                tg_bot.send_message(tg_chat_id, 'OK. Waiting for VK...')
         else:
             if vk_chat_id:
                 process_message_from_tg(message)
@@ -213,10 +227,16 @@ def vk_to_tg_dispatcher():
         if event.type == VkEventType.MESSAGE_NEW and event.to_me:
             # Регистрация в контаче аналогично регистрации в телеге:
             # запоминаем id пользователя, который регается.
-            if event.text.startswith('/start'):
+            if vk_chat_id is None and event.text.startswith('/start'):
                 global vk_chat_id
                 vk_chat_id = event.peer_id
-                vk_funcs.messages.send(peer_id=vk_chat_id, message='OK')
+                if tg_chat_id is not None:
+                    notify_register_complete()
+                else:
+                    vk_funcs.messages.send(
+                        peer_id=vk_chat_id,
+                        message='OK. Waiting for telegram...'
+                    )
 
             else:
                 if tg_chat_id:
