@@ -7,9 +7,9 @@ import telebot
 import vk_api
 
 from threading import Thread
-from functools import lru_cache
 from vk_api.longpoll import VkLongPoll, VkEventType
 
+import helpers
 import handlers
 
 
@@ -45,15 +45,6 @@ vk_funcs = vk_bot.get_api()
 vk_upload = vk_api.VkUpload(vk_bot)
 
 
-@lru_cache(maxsize=None)
-def get_sender_name(vk_funcs, user_id):
-    """
-    Возвращает имя (строку) пользователя контача по его id.
-    """
-    sender_info = vk_funcs.users.get(user_ids=str(user_id))[0]
-    return '{first_name} {last_name}'.format(**sender_info)
-
-
 def process_attachments_from_vk(event, message):
     """
     Обрабатывает прикрепленные к сообщению данные, такие как
@@ -71,7 +62,7 @@ def process_attachments_from_vk(event, message):
     }
 
     handlers_found = False
-    for attachment in message.attachments:
+    for attachment in message['attachments']:
         try:
             handler = vk_attachment_handlers_map[attachment['type']]
         except KeyError:
@@ -81,7 +72,7 @@ def process_attachments_from_vk(event, message):
             handler(
                 tg_bot, vk_bot, vk_funcs, vk_upload,
                 tg_chat_id, vk_chat_id,
-                message, attachment
+                event, message, attachment
             )
 
     if not handlers_found and not getattr(event, 'text', None):
@@ -91,24 +82,43 @@ def process_attachments_from_vk(event, message):
         )
 
 
+def process_fwd_from_vk(event, message_obj):
+    """
+    Обрабатывает форвард сообщений из ВК
+    """
+    text_parts = []
+    for fwd_message in message_obj['fwd_messages']:
+        sender_name = helpers.get_sender_name(vk_funcs, fwd_message['user_id'])
+        text_parts.append(
+            u'--- {} ---\n{}'.format(sender_name, fwd_message['body'])
+        )
+    text = '\n\n'.join(text_parts)
+
+    sender = helpers.get_sender_name(vk_funcs, event.user_id)
+    tg_bot.send_message(tg_chat_id, '{}: FWD:\n{}'.format(sender, text))
+
+
 def process_message_from_vk(event):
     """
     Обрабатывает сообщение из ВК.
     :param event: объект Event с данными полученного сообщения
     """
-    sender = get_sender_name(vk_funcs, event.user_id)
+    sender = helpers.get_sender_name(vk_funcs, event.user_id)
 
-    if event_text:
+    if event.text:
         tg_bot.send_message(
             tg_chat_id,
-            '{}:\n{}'.format(sender, event_text)
+            '{}:\n{}'.format(sender, event.text)
         )
 
     if getattr(event, 'attachments', {}):
         message_obj = vk_funcs.messages.getById(
             message_ids=str(event.message_id))['items'][0]
 
-        process_attachments_from_vk(event, message_obj)
+        if 'attachments' in message_obj:
+            process_attachments_from_vk(event, message_obj)
+        elif 'fwd_messages' in message_obj:
+            process_fwd_from_vk(event, message_obj)
 
 
 def process_attachment_from_tg(message):
@@ -122,6 +132,7 @@ def process_attachment_from_tg(message):
         'sticker': handlers.tg_sticker,
         'document': handlers.tg_document,
         'voice': handlers.tg_voice,
+        'audio': handlers.tg_audio,
     }
 
     handlers_to_execute = []

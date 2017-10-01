@@ -1,12 +1,11 @@
 # coding: utf-8
 
-import os
-import io
+import helpers
 
 
 def vk_photo(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Фото из ВК"""
     available_photo_sizes = (
         'photo_2560', 'photo_1280', 'photo_807', 'photo_604', 'photo_130',
@@ -17,9 +16,11 @@ def vk_photo(
             link = attachment['photo'][size_key]
             break
     if link is not None:
+        sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
         tg_bot.send_message(
             tg_chat_id,
-            'Attachment/photo:\n{}\n{}'.format(
+            '{}:\n{}\n{}'.format(
+                sender_name,
                 attachment['photo']['text'],
                 link
             )
@@ -28,7 +29,7 @@ def vk_photo(
 
 def vk_video(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Видео из ВК"""
     preview_link = None
     for size_key in 'photo_800', 'photo_640', 'photo_320', 'photo_130':
@@ -36,9 +37,11 @@ def vk_video(
             preview_link = attachment['video'][size_key]
             break
     if preview_link is not None:
+        sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
         tg_bot.send_message(
             tg_chat_id,
-            'Attachment/video:\n{}\n{}\n{}\n{}\n'.format(
+            '{}:\n{}\n{}\n{}\n{}\n'.format(
+                sender_name,
                 attachment['video']['title'],
                 attachment['video']['description'],
                 preview_link,
@@ -49,11 +52,13 @@ def vk_video(
 
 def vk_audio(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Аудио из ВК"""
+    sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
     tg_bot.send_message(
         tg_chat_id,
-        'Attachment/audio:\n{}\n{}\n{}\n'.format(
+        '{}:\n{}\n{}\n{}\n'.format(
+            sender_name,
             attachment['audio']['artist'],
             attachment['audio']['title'],
             attachment['audio']['url'],
@@ -63,11 +68,13 @@ def vk_audio(
 
 def vk_doc(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Документ из ВК"""
+    sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
     tg_bot.send_message(
         tg_chat_id,
-        'Attachment/doc:\n{}(ext is {})\n{}\n'.format(
+        '{}:\n{} (ext={})\n{}\n'.format(
+            sender_name,
             attachment['doc']['title'],
             attachment['doc']['ext'],
             attachment['doc']['url'],
@@ -77,11 +84,13 @@ def vk_doc(
 
 def vk_link(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Ссылка в ВК (пока неизвестно, что это)"""
+    sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
     tg_bot.send_message(
         tg_chat_id,
-        'Attachment/link:\n{}(ext is {})\n{}\n'.format(
+        '{}:\n{}\n{}\n{}\n'.format(
+            sender_name,
             attachment['link']['title'],
             attachment['link']['description'],
             attachment['link']['url'],
@@ -89,32 +98,24 @@ def vk_link(
     )
 
 
-
 def vk_sticker(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id,
-        message, attachment):
+        event, message, attachment):
     """Стикер в ВК"""
-    tg_bot.send_message(
-        tg_chat_id,
-        'Attachment/sticker: <not implemented>\n{}\n'.format(
-            repr(attachment['sticker'])
+    size_keys = (
+        'photo_512', 'photo_352', 'photo_256', 'photo_128', 'photo_64')
+    sticker = attachment['sticker']
+    url = None
+    for size_key in size_keys:
+        if size_key in sticker:
+            url = sticker[size_key]
+            break
+    if url is not None:
+        sender_name = helpers.get_sender_name(vk_funcs, event.user_id)
+        tg_bot.send_message(
+            tg_chat_id,
+            '{}:\n{}\n'.format(sender_name, url)
         )
-    )
-
-
-def _get_file_buffer_by_file_id(tg_bot, telegram_file_id):
-    """Скачивает файл с сервера телеги по идентификатору.
-
-    :param tg_bot: бот телеги
-    :param telegram_file_id: id файла telegram api
-    :return: BytesIO с содержимым файла.
-    """
-    file_obj = tg_bot.get_file(telegram_file_id)
-    buf = io.BytesIO(
-        tg_bot.download_file(file_obj.file_path)
-    )
-    buf.name = os.path.basename(file_obj.file_path)
-    return buf
 
 
 def tg_photo(
@@ -122,7 +123,7 @@ def tg_photo(
     """Фото из телеги"""
     file_size_obj = message.photo[-1]
     vk_uploaded_msg = vk_upload.photo_messages(
-        _get_file_buffer_by_file_id(tg_bot, file_size_obj.file_id)
+        helpers.get_file_buffer_by_file_id(tg_bot, file_size_obj.file_id)
     )[0]
     vk_funcs.messages.send(
         peer_id=vk_chat_id,
@@ -136,7 +137,7 @@ def tg_sticker(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id, message):
     """Стикер из телеги"""
     vk_uploaded_msg = vk_upload.document_wall(
-        _get_file_buffer_by_file_id(tg_bot, message.sticker.file_id)
+        helpers.get_file_buffer_by_file_id(tg_bot, message.sticker.file_id)
     )[0]
     vk_funcs.messages.send(
         peer_id=vk_chat_id,
@@ -150,7 +151,7 @@ def tg_document(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id, message):
     """Документ из телеги"""
     vk_uploaded_msg = vk_upload.document(
-        _get_file_buffer_by_file_id(tg_bot, message.document.file_id)
+        helpers.get_file_buffer_by_file_id(tg_bot, message.document.file_id)
     )[0]
     vk_funcs.messages.send(
         peer_id=vk_chat_id,
@@ -164,11 +165,27 @@ def tg_voice(
         tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id, message):
     """Войсач из телеги"""
     vk_uploaded_msg = vk_upload.audio_message(
-        _get_file_buffer_by_file_id(tg_bot, message.voice.file_id)
+        helpers.get_file_buffer_by_file_id(tg_bot, message.voice.file_id)
     )[0]
     vk_funcs.messages.send(
         peer_id=vk_chat_id,
         attachment='doc{}_{}'.format(
             vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
         message='<document/audio>'
+    )
+
+
+def tg_audio(
+        tg_bot, vk_bot, vk_funcs, vk_upload, tg_chat_id, vk_chat_id, message):
+    """Аудио из телеги"""
+    vk_uploaded_msg = vk_upload.audio(
+        helpers.get_file_buffer_by_file_id(tg_bot, message.audio.file_id),
+        message.audio.performer or 'Unknown',
+        message.audio.title or 'Unknown',
+    )
+    vk_funcs.messages.send(
+        peer_id=vk_chat_id,
+        attachment='audio{}_{}'.format(
+            vk_uploaded_msg['owner_id'], vk_uploaded_msg['id']),
+        message=message.audio.title
     )
