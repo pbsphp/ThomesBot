@@ -199,12 +199,12 @@ def tg_to_vk_dispatcher():
         """
         В телегу пришло сообщение. Добавляем в очередь отправки.
         """
+        global tg_chat_id
         if (tg_chat_id is None and message.text and
                 message.text.startswith('/start')):
             # Регистрация в телеге происходит следующим способом:
             # Пользователь вводит /start, запоминается id чатика в
             # телеге. Далее сообщения будут отправляться в этот чат.
-            global tg_chat_id
             tg_chat_id = message.chat.id
             if vk_chat_id is not None:
                 notify_register_complete()
@@ -222,13 +222,13 @@ def vk_to_tg_dispatcher():
     "Слушает" контач, отправляет сообщения в телегу.
     Также выполняет регу диалогов (см. /start).
     """
+    global vk_chat_id
     longpoll = VkLongPoll(vk_bot)
     for event in longpoll.listen():
         if event.type == VkEventType.MESSAGE_NEW and event.to_me:
             # Регистрация в контаче аналогично регистрации в телеге:
             # запоминаем id пользователя, который регается.
             if vk_chat_id is None and event.text.startswith('/start'):
-                global vk_chat_id
                 vk_chat_id = event.peer_id
                 if tg_chat_id is not None:
                     notify_register_complete()

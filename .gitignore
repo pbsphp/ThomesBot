@@ -2,3 +2,4 @@ config.ini
 .idea
 vk_config.v2.json
 __pycache__
+*.pyc
